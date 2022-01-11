@@ -52,19 +52,11 @@ def merge_referendum_and_areas(referendum, regions_and_departments):
     You can drop the lines relative to DOM-TOM-COM departments, and the
     french living abroad.
     """
-
-    dfreg = regions_and_departments[
-        regions_and_departments["code_reg"].str.isdigit()
-    ]
-    dfreg = dfreg[~dfreg["code_reg"].isin(["01", "02", "03", "04", "06"])]
-    dfreg.rename(columns={"code_dep": "Department code"}, inplace=True)
-
     dfref = referendum
-    dfref = dfref[dfref["Department code"].str.isdigit()]
-
-    merged = pd.merge(dfref, dfreg, on="Department code", how="left")
-    merged["code_dep"] = merged["Department code"]
-    print(merged.shape)
+    dfref["code_dep"] = dfref["Department code"].apply(
+        lambda s: "0" + s if len(s) == 1 else s
+    )
+    merged = pd.merge(dfref, regions_and_departments, on="code_dep")
 
     return merged
 
@@ -76,20 +68,20 @@ def compute_referendum_result_by_regions(referendum_and_areas):
     ['name_reg', 'Registered', 'Abstentions', 'Null', 'Choice A', 'Choice B']
     """
 
-    grouped = referendum_and_areas.groupby("name_reg").sum()
-    grouped.rename(
-        columns={
-            "registered": "Registered",
-            "abstentions": "Abstentions",
-            "null": "Null",
-            "choice_a": "Choice A",
-            "choice_b": "Choice B",
-        },
-        inplace=True,
+    df = referendum_and_areas.drop(
+        ["code_dep", "Department name", "Town code", "Town name", "name_dep"],
+        axis=1,
     )
-    grouped = grouped[
-        ["Registered", "Abstentions", "Null", "Choice A", "Choice B"]
-    ]
+    grouped = df.groupby(["code_reg"]).aggregate(
+        {
+            "name_reg": "min",
+            "Registered": "sum",
+            "Abstentions": "sum",
+            "Null": "sum",
+            "Choice A": "sum",
+            "Choice B": "sum",
+        }
+    )
 
     return grouped
 
@@ -104,14 +96,15 @@ def plot_referendum_map(referendum_result_by_regions):
     * Return a gpd.GeoDataFrame with a column 'ratio' containing the results.
     """
 
-    geo = gpd.read_file("data/regions.geojson")
-    geo = geo[~geo["code"].isin(["01", "02", "03", "04", "06", "94"])]
-    geo.rename(columns={"nom": "name_reg"}, inplace=True)
+    file = open("data/regions.geojson")
+    df = gpd.read_file(file)
+    df = df.rename(columns={"code": "code_reg"}).set_index("code_reg")
 
-    merged = pd.merge(geo, referendum_result_by_regions, on="name_reg")
-
-    merged["ratio"] = merged["Choice A"] / merged["Registered"]
-    merged.plot(column="ratio")
+    merged = pd.merge(df, referendum_result_by_regions, on="code_reg")
+    merged["ratio"] = merged["Choice A"] / (
+        merged["Choice A"] + merged["Choice B"]
+    )
+    merged.plot("ratio", legend=True)
 
     return merged
 
